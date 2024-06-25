@@ -2,7 +2,7 @@ using UnityEngine;
 using UnityEditor;
 using UnityEngine.SceneManagement;
 
-namespace me.Conkist.Tools.Editor
+namespace Conkist.GDK.Editor
 {
     public class WebGLBuildPipeline
     {
