@@ -1,24 +1,100 @@
 ﻿using UnityEngine;
 
-namespace Conkist.Tools
+namespace Conkist.GDK
 {
+    /// <summary>
+    /// A generic Singleton base class for Unity MonoBehaviour components.
+    /// Ensures only one instance of the component exists in the scene.
+    /// </summary>
+    /// <typeparam name="T">Type of the component inheriting from this Singleton class.</typeparam>
     [DefaultExecutionOrder(-100)]
-    public class Singleton<T> : MonoBehaviour where T : MonoBehaviour {
-    
+    public class Singleton<T> : MonoBehaviour where T : Component
+    {
+        // The singleton instance
         protected static T _instance;
-        public static T Instance => _instance;
 
-        [SerializeField] protected bool _persistent = true;
-    
-        protected virtual void Awake (){
-            if (_instance != null && _instance != this){
-                Debug.LogWarning("A instance already exists. Destroying it!");
-                Destroy(this.gameObject); //Or GameObject as appropriate
+        // Flags to control the singleton behavior
+        public bool persistent = true;
+        public bool keepOldest = true;
+
+        /// <summary>
+        /// Gets a value indicating whether an instance of the Singleton exists.
+        /// </summary>
+        public static bool HasInstance => _instance != null;
+
+        /// <summary>
+        /// Attempts to get the instance of the Singleton. Returns null if no instance exists.
+        /// </summary>
+        public static T TryGetInstance() => HasInstance ? _instance : null;
+
+        /// <summary>
+        /// Gets the singleton instance, creating it if it doesn't already exist.
+        /// </summary>
+        public static T Instance
+        {
+            get
+            {
+                if (_instance == null)
+                {
+                    InitializeInstance();
+                }
+                return _instance;
+            }
+        }
+
+        /// <summary>
+        /// Initializes the singleton instance, if necessary.
+        /// </summary>
+        protected static void InitializeInstance()
+        {
+            _instance = FindObjectOfType<T>();
+            if (_instance == null)
+            {
+                GameObject obj = new GameObject { name = $"{typeof(T).Name}_AutoCreated" };
+                _instance = obj.AddComponent<T>();
+            }
+        }
+
+        protected virtual void Awake()
+        {
+            if (!Application.isPlaying)
+            {
                 return;
             }
-            _instance = gameObject.GetComponent<T>();
-            
-            if(_persistent)
+            HandleSingletonInstance();
+            SetPersistency(persistent);
+        }
+
+        /// <summary>
+        /// Manages the singleton instance, ensuring only one exists based on the configuration.
+        /// </summary>
+        protected void HandleSingletonInstance()
+        {
+            if (_instance == null)
+            {
+                _instance = this as T;
+            }
+            else if (_instance != this)
+            {
+                if (_instance is Singleton<T> existingInstance && existingInstance.keepOldest)
+                {
+                    Destroy(gameObject);
+                }
+                else
+                {
+                    Destroy(_instance.gameObject);
+                    _instance = this as T;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Sets the singleton object to persist across scenes, if configured to do so.
+        /// </summary>
+        /// <param name="shouldPersist">If true, the object will persist between scene loads.</param>
+        protected void SetPersistency(bool shouldPersist)
+        {
+            if (shouldPersist && _instance != null)
             {
                 _instance.transform.SetParent(null);
                 DontDestroyOnLoad(_instance.gameObject);

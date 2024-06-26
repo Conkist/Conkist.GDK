@@ -1,6 +1,6 @@
 {
     "name": "Conkist.Tools.Editor",
-    "rootNamespace": "",
+    "rootNamespace": "Conkist.GDK.Editor",
     "references": [],
     "includePlatforms": [
         "Editor"
