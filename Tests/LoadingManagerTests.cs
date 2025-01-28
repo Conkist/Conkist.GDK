@@ -1,7 +1,6 @@
 using System.Collections;
 using Cysharp.Threading.Tasks;
 using NUnit.Framework;
-using UnityEngine;
 using UnityEngine.TestTools;
 
 namespace Conkist.GDK.Tests
@@ -13,45 +12,21 @@ namespace Conkist.GDK.Tests
         public void SetUp()
         {
             // Ensure a new instance of LoadingManager for each test.
-            if (LoadingManager.HasInstance)
-            {
-                GameObject.DestroyImmediate(LoadingManager.Instance.gameObject);
-            }
-            var go = new GameObject("LoadingManager", typeof(LoadingManager));
+            // if (LoadingManager.HasInstance)
+            // {
+            //     GameObject.DestroyImmediate(LoadingManager.Instance.gameObject);
+            // }
+            // var go = new GameObject("LoadingManager", typeof(LoadingManager));
         }
 
         [TearDown]
         public void TearDown()
         {
             // Clean up after each test
-            if (LoadingManager.HasInstance)
-            {
-                GameObject.DestroyImmediate(LoadingManager.Instance.gameObject);
-            }
-        }
-
-        /// <summary>
-        /// Tests that the InCache method properly checks if an address is in cache.
-        /// </summary>
-        /// <returns>An IEnumerator for UnityTest using UniTask.</returns>
-        [UnityTest]
-        public IEnumerator LoadingManager_CheckInCacheBeforeaAndAfterDownload()
-        {
-            return UniTask.ToCoroutine(async () =>
-            {
-                // Arrange
-                string address = "test-content";
-                bool inCache = false;
-
-                await LoadingManager.Instance.InCacheAsync(address);
-                Assert.IsFalse(inCache);
-
-                await LoadingManager.Instance.DownloadContentAsync(address, LoadType.Hidden);
-                Assert.Pass();
-
-                await LoadingManager.Instance.InCacheAsync(address);
-                Assert.IsTrue(inCache);
-            });
+            // if (LoadingManager.HasInstance)
+            // {
+            //     GameObject.DestroyImmediate(LoadingManager.Instance.gameObject);
+            // }
         }
 
         /// <summary>
@@ -69,13 +44,37 @@ namespace Conkist.GDK.Tests
                 LoadType loadType = LoadType.Hidden;
 
                 // Act
-                var asset = await LoadingManager.Instance.LoadAssetAsync<Object>(address, loadType);
+                var asset = await LoadingManager.LoadAssetAsync(address, loadType);
                 Assert.Pass();
                 Assert.NotNull(asset);
 
-                LoadingManager.Instance.UnloadAsset(asset);
+                LoadingManager.UnloadAsset(asset);
                 Assert.Pass();
                 Assert.Null(asset);
+            });
+        }
+
+        /// <summary>
+        /// Tests that the InCache method properly checks if an address is in cache.
+        /// </summary>
+        /// <returns>An IEnumerator for UnityTest using UniTask.</returns>
+        [UnityTest]
+        public IEnumerator LoadingManager_CheckInCacheBeforeaAndAfterDownload()
+        {
+            return UniTask.ToCoroutine(async () =>
+            {
+                // Arrange
+                string address = "test-content";
+                bool inCache = false;
+
+                await LoadingManager.InCacheAsync(address);
+                Assert.IsFalse(inCache);
+
+                await LoadingManager.DownloadContentAsync(address, LoadType.Hidden);
+                Assert.Pass();
+
+                await LoadingManager.InCacheAsync(address);
+                Assert.IsTrue(inCache);
             });
         }
 
@@ -92,7 +91,7 @@ namespace Conkist.GDK.Tests
                 string address = "MainScene";
 
                 // Act
-                LoadingManager.Instance.ClearCache(address);
+                LoadingManager.ClearCache(address);
                 await UniTask.NextFrame();
 
                 // Assert

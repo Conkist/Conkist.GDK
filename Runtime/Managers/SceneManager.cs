@@ -3,92 +3,172 @@ using UnityEngine.AddressableAssets;
 using UnityEngine.ResourceManagement.ResourceProviders;
 using Cysharp.Threading.Tasks;
 
-namespace Conkist.GDK.Loading
+namespace Conkist.GDK
 {
-    [RequireComponent(typeof(LoadingManager))]
-    public class SceneManager : MonoBehaviour
+    public class SceneManager : ScriptableObject
     {
-        protected AsyncOperation _asyncOperation;
-        protected static string _sceneToLoad = "";
 
-        [SerializeField] LoadEventListener quickLoadListener;
-        [SerializeField] LoadEventListener sceneLoadListener;
+        private static SceneInstance activeScene;
 
-        public async UniTask<SceneInstance> LoadAsync(string sceneToLoad, LoadType loadType = LoadType.FullScreen)
+        public static async UniTask<SceneInstance> LoadSceneAsync(string sceneToLoad, LoadType loadType = LoadType.FullScreen)
         {
-            await LoadingEventTask(sceneToLoad, LoadStatus.LoadStarted, loadType);
+            if(LoadingManager.IsLoading){
+                Debug.LogWarning("Manager is currently loading something");
+                return activeScene;
+            }
+            LoadingManager.StartupLoading(sceneToLoad, loadType);
+
             //Application.backgroundLoadingPriority = ThreadPriority.High;
             var loader = Addressables.LoadSceneAsync(sceneToLoad);
-
+            loader.Completed += (op) => {
+                activeScene = op.Result;
+                LoadingManager.ChangeLoadingState(LoadingStates.LoadProgressComplete);
+                LoadingManager.ChangeLoadingState(LoadingStates.DestinationSceneActivation);
+            };
             var scene = await loader;
-            await LoadingEventTask(sceneToLoad, LoadStatus.InterpolatedLoadProgressComplete, loadType);
+
+            LoadingManager.ChangeLoadingState(LoadingStates.ExitFade);
+            LoadingManager._isLoading = false;
 
             return scene;
         }
 
-        public async UniTask<SceneInstance> LoadAsync(AssetReferenceScene sceneToLoad, LoadType loadType = LoadType.FullScreen)
+        public static async UniTask<SceneInstance> LoadSceneAsync(AssetReference sceneToLoad, LoadType loadType = LoadType.FullScreen)
         {
-            await LoadingEventTask(sceneToLoad.AssetGUID, LoadStatus.LoadStarted, loadType);
+            if(LoadingManager.IsLoading){
+                Debug.LogWarning("Manager is currently loading something");
+                return activeScene;
+            }
+            LoadingManager.StartupLoading(sceneToLoad.AssetGUID, loadType);
+
             //Application.backgroundLoadingPriority = ThreadPriority.High;
             var loader = Addressables.LoadSceneAsync(sceneToLoad);
-
+            loader.Completed += (op) => {
+                activeScene = op.Result;
+                LoadingManager.ChangeLoadingState(LoadingStates.LoadProgressComplete);
+                LoadingManager.ChangeLoadingState(LoadingStates.DestinationSceneActivation);
+            };
             var scene = await loader;
-            await LoadingEventTask(sceneToLoad.AssetGUID, LoadStatus.InterpolatedLoadProgressComplete, loadType);
+
+            LoadingManager.ChangeLoadingState(LoadingStates.ExitFade);
+            LoadingManager._isLoading = false;
 
             return scene;
         }
 
-        public async UniTask<SceneInstance> AddAsync(string sceneToAdd, LoadType loadType = LoadType.Hidden)
+        public static async UniTask<SceneInstance> AddSceneAsync(string sceneToAdd, LoadType loadType = LoadType.Hidden, bool forceMultiload = false, bool activate = true)
         {
-            await LoadingEventTask(sceneToAdd, LoadStatus.LoadStarted, loadType);
+            if(forceMultiload)
+            {
+                var forceload = Addressables.LoadSceneAsync(sceneToAdd, loadMode: UnityEngine.SceneManagement.LoadSceneMode.Additive);
+                forceload.Completed += (op) => OnCompleteAdditiveLoadOp(op.Result, forceMultiload: true, activate);
+                return await forceload;
+            }
+            if(LoadingManager.IsLoading){
+                Debug.LogWarning("Manager is currently loading something");
+                return activeScene;
+            }
+            LoadingManager.StartupLoading(sceneToAdd, loadType);
+
             //Application.backgroundLoadingPriority = ThreadPriority.High;
             var loader = Addressables.LoadSceneAsync(sceneToAdd, loadMode: UnityEngine.SceneManagement.LoadSceneMode.Additive);
+            loader.Completed += (op) => {
+                LoadingManager.ChangeLoadingState(LoadingStates.LoadProgressComplete);
+                OnCompleteAdditiveLoadOp(op.Result, forceMultiload: true, activate);
+            };
             var scene = await loader;
-            await LoadingEventTask(sceneToAdd, LoadStatus.InterpolatedLoadProgressComplete, loadType);
+
+            LoadingManager.ChangeLoadingState(LoadingStates.ExitFade);
+            LoadingManager._isLoading = false;
 
             return scene;
         }
 
-        public async UniTask<SceneInstance> AddAsync(AssetReferenceScene sceneToAdd, LoadType loadType = LoadType.Hidden)
+        public static async UniTask<SceneInstance> AddSceneAsync(AssetReference sceneToAdd, LoadType loadType = LoadType.Hidden, bool forceMultiload = false, bool activate = true)
         {
-            await LoadingEventTask(sceneToAdd.AssetGUID, LoadStatus.LoadStarted, loadType);
+            if(forceMultiload)
+            {
+                var forceload = Addressables.LoadSceneAsync(sceneToAdd, loadMode: UnityEngine.SceneManagement.LoadSceneMode.Additive);
+                forceload.Completed += (op) => OnCompleteAdditiveLoadOp(op.Result, forceMultiload, activate);
+                return await forceload;
+            }
+            if(LoadingManager.IsLoading){
+                Debug.LogWarning("Manager is currently loading something");
+                return activeScene;
+            }
+            Debug.Log("Add Scene from Reference");
+            LoadingManager.StartupLoading(sceneToAdd.AssetGUID, loadType);
+
             //Application.backgroundLoadingPriority = ThreadPriority.High;
             var loader = Addressables.LoadSceneAsync(sceneToAdd, loadMode: UnityEngine.SceneManagement.LoadSceneMode.Additive);
+            loader.Completed += (op) => {
+                LoadingManager.ChangeLoadingState(LoadingStates.LoadProgressComplete);
+                OnCompleteAdditiveLoadOp(op.Result, forceMultiload, activate);
+            };
             var scene = await loader;
-            await LoadingEventTask(sceneToAdd.AssetGUID, LoadStatus.InterpolatedLoadProgressComplete, loadType);
+
+            LoadingManager.ChangeLoadingState(LoadingStates.ExitFade);
+            LoadingManager._isLoading = false;
 
             return scene;
         }
 
-        public async UniTask Remove(SceneInstance scene, bool autoRelease = true, LoadType loadType = LoadType.Hidden)
+        private static void OnCompleteAdditiveLoadOp(SceneInstance scene, bool forceMultiload, bool activate)
+        {
+            if(activate) UnityEngine.SceneManagement.SceneManager.SetActiveScene(scene.Scene);
+            activeScene = scene;
+            if(!forceMultiload) LoadingManager.ChangeLoadingState(LoadingStates.DestinationSceneActivation);
+        }
+
+        public static bool IsSceneLoaded(string address)
+        {
+            return UnityEngine.SceneManagement.SceneManager.GetSceneByName(address).isLoaded;
+        }
+
+        public static async UniTask ReloadScene(LoadType loadType = LoadType.FullScreen)
+        {
+            LoadingManager._isLoading = true;
+            LoadingManager.ChangeLoadType(loadType);
+            LoadingManager.ChangeLoadingState(LoadingStates.LoadStarted);
+
+            var task = UnityEngine.SceneManagement.SceneManager.LoadSceneAsync(UnityEngine.SceneManagement.SceneManager.GetActiveScene().name)
+                .ToUniTask(Progress.Create<float>(LoadingManager.LoadProgress));
+            await task;
+
+            LoadingManager.ChangeLoadingState(LoadingStates.LoadProgressComplete);
+            LoadingManager._isLoading = false;
+            LoadingEvents.ReloadSceneEvent.Trigger();
+        }
+
+        public static async UniTask ReloadApplication(){
+            LoadingManager._isLoading = true;
+            LoadingManager.ChangeLoadType(LoadType.Hidden);
+            LoadingManager.ChangeLoadingState(LoadingStates.LoadStarted);
+
+            var task = UnityEngine.SceneManagement.SceneManager.LoadSceneAsync(0)
+                .ToUniTask(Progress.Create<float>(LoadingManager.LoadProgress));
+            await task;
+
+            LoadingManager.ChangeLoadingState(LoadingStates.LoadProgressComplete);
+            LoadingManager._isLoading = false;
+            LoadingEvents.ReloadSceneEvent.Trigger();
+        }
+
+        /// <summary>
+        /// Basic remove operation for additive scenes
+        /// </summary>
+        /// <param name="scene"></param>
+        /// <param name="autoRelease"></param>
+        /// <param name="loadType"></param>
+        /// <returns></returns>
+        public static async UniTask RemoveScene(SceneInstance scene, bool autoRelease = true, LoadType loadType = LoadType.Hidden)
         {
             await Addressables.UnloadSceneAsync(scene, autoReleaseHandle: autoRelease);
         }
 
-        public async UniTask Reload(LoadType loadType = LoadType.FullScreen)
+        public static void CreateScene(string v)
         {
-            await UnityEngine.SceneManagement.SceneManager.LoadSceneAsync(UnityEngine.SceneManagement.SceneManager.GetActiveScene().name);
-        }
-
-        private UniTask LoadingEventTask(string address, LoadStatus status, LoadType type)
-        {
-            LoadingEvent.Trigger(address, status, type);
-            switch (type)
-            {
-                case LoadType.Quick:
-                    {
-                        if(quickLoadListener != null)
-                        return quickLoadListener.GetLoadingTask(address, status);
-                    }
-                    break;
-                case LoadType.FullScreen:
-                    {
-                        if(sceneLoadListener != null)
-                        return sceneLoadListener.GetLoadingTask(address, status);
-                    }
-                    break;
-            }
-            return UniTask.Yield().ToUniTask();
+            Debug.Log("Creating Scene: " + v);
         }
     }
 }

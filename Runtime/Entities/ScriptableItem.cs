@@ -19,7 +19,7 @@ namespace Conkist.GDK
 
         [SerializeField]
         [Tooltip("Path to the image asset representing the item.")]
-        protected string imagePath;
+        protected Sprite image;
 
         [SerializeField]
         [TextArea(5, 8)]
@@ -34,7 +34,7 @@ namespace Conkist.GDK
         /// <summary>
         /// Gets the path to the image asset representing the item.
         /// </summary>
-        public string ImagePath => imagePath;
+        public Sprite ImageID => image;
 
         /// <summary>
         /// Gets the localization key for the item's description.

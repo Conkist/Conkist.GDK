@@ -3,7 +3,6 @@ using UnityEngine;
 using UnityEngine.TestTools;
 using NUnit.Framework;
 using Cysharp.Threading.Tasks;
-using UnityEngine.SceneManagement;
 
 namespace Conkist.GDK.Tests
 {

@@ -1,7 +1,7 @@
 using UnityEngine;
 using UnityEngine.AddressableAssets;
 
-namespace Conkist.GDK.Loading
+namespace Conkist.GDK
 {
     [System.Serializable]
     public class AssetReferenceScene : AssetReference

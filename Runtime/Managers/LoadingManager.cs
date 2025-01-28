@@ -1,5 +1,4 @@
 using UnityEngine;
-using UnityEngine.Events;
 using UnityEngine.AddressableAssets;
 using Object = UnityEngine.Object;
 using Cysharp.Threading.Tasks;
@@ -7,131 +6,107 @@ using Conkist.GDK.Loading;
 
 namespace Conkist.GDK
 {
-    /// <summary>
-    /// Represents a loading event with address, status, and type.
-    /// </summary>
-    public struct LoadingEvent
-    {
-        static LoadingEvent ev;
-
-        public string Address;
-        public LoadStatus Status;
-        public LoadType Type;
-
-        public LoadingEvent(string address, LoadStatus status, LoadType type)
-        {
-            Address = address;
-            Status = status;
-            Type = type;
-        }
-
-        /// <summary>
-        /// Triggers a loading event.
-        /// </summary>
-        /// <param name="address">The address related to the event.</param>
-        /// <param name="status">The load status.</param>
-        /// <param name="type">The type of load.</param>
-        public static void Trigger(string address, LoadStatus status, LoadType type)
-        {
-            ev.Address = address;
-            ev.Status = status;
-            ev.Type = type;
-
-            EventManager.TriggerEvent(ev);
-        }
-    }
-
-    /// <summary>
-    /// Enum representing different loading status stages.
-    /// </summary>
-    public enum LoadStatus
-    {
-        LoadStarted,
-        BeforeEntryFade, EntryFade, AfterEntryFade,
-        UnloadOriginScene, LoadDestinationScene, LoadProgressComplete, InterpolatedLoadProgressComplete, DestinationSceneActivation,
-        BeforeExitFade, ExitFade,
-        UnloadSceneLoader, LoadTransitionComplete
-    }
-
-    /// <summary>
-    /// Enum representing different types of loads.
-    /// </summary>
-    public enum LoadType
-    {
-        Hidden, Quick, FullScreen
-    }
-
+    [CreateAssetMenu(menuName = "Game/ScriptableManagers/LoadingManager", fileName = "LoadingManager")]
     /// <summary>
     /// Manages loading operations and broadcasts loading events using LoadingEvent.
     /// </summary>
-    public class LoadingManager : Singleton<LoadingManager>
+    public class LoadingManager : ScriptableObject
     {
-        [SerializeField] SceneManager _sceneManager;
-        public static SceneManager Scene => Instance._sceneManager;
-
-
-        //TODO VOLTAR DAQUI, VER VARIAVEIS PRIVADAS DE ACOMPANHAMENTO DO LOADING MANAGER!!!!!
-
-        public bool IsLoading { get; private set; }
-        public bool IsDownloading { get; private set; }
-        public LoadStatus LoadStatus { get; private set; }
-        public LoadType LoadType { get; private set; }
-
-        [Header("Bindings")]
-        [SerializeField] LoadEventListener quickLoadListener;
-        [SerializeField] LoadEventListener downloadListener;
-
-        [Header("Events")]
-        [SerializeField] UnityEvent onLoadSetup;
-        [SerializeField] UnityEvent onLoadComplete;
-
-        /// <summary>
-        /// Initializes the scene manager if not already set.
-        /// </summary>
-        protected override void Awake()
+        private static LoadingManager _instance;
+        public static LoadingManager Instance
         {
-            base.Awake();
-            if (Scene == null) _sceneManager = GetComponent<SceneManager>();
-        }
-
-        /// <summary>
-        /// Checks asynchronously if a given address is in the cache, invoking a callback with the result.
-        /// </summary>
-        /// <param name="address">The address to check.</param>
-        /// <param name="callback">Callback indicating if the address is in cache.</param> 
-        public void InCache(string address, UnityAction<bool> callback)
-        {
-            try
+            get
             {
-                var download = Addressables.GetDownloadSizeAsync(address);
-                download.Completed += (op) =>
+                if(_instance == null)
                 {
-                    callback?.Invoke(op.IsDone && op.Result == 0);
-                };
-            }catch(InvalidKeyException ex)
-            {
-                Debug.LogWarning("The address:" + address + " is not listed in the addressable groups. Try to make a new build if does.");
+                    _instance = Resources.Load<LoadingManager>("LoadingManager");
+                }
+                return _instance;
             }
         }
 
-        /// <summary>
-        /// Asynchronously checks if a given address is in the cache.
-        /// </summary>
-        /// <param name="address">The address to check.</param>
-        /// <returns>True if in cache, otherwise false.</returns>
-        public async UniTask<bool> InCacheAsync(string address)
+        internal static bool _isLoading;
+        public static bool IsLoading => _isLoading;
+        internal static string _loadAddress;
+        internal static bool _ignoreEventsOnHidden;
+
+        private float _loadingProgress;
+        public float LoadingProgress => _loadingProgress;
+
+        private LoadingStates _loadingStates;
+        public LoadingStates LoadingStates => _loadingStates;
+        private LoadType _loadType;
+
+        public static async UniTask<Object> LoadAssetAsync(string address, LoadType loadType = LoadType.Hidden)
         {
-            try
-            {
-                var getSizeAsyncOp = Addressables.GetDownloadSizeAsync(address).Task.AsUniTask();
-                long result = await getSizeAsyncOp;
-                return result > 0;
+            if(IsLoading){
+                Debug.LogWarning("Manager is currently loading something");
+                return null;
             }
-            catch (InvalidKeyException ex)
-            {
-                Debug.LogWarning("The address:" + address + " is not listed in the addressable groups. Try to make a new build if does.");
-                return false;
+            StartupLoading(address, loadType);
+
+            var locations = await Addressables.LoadResourceLocationsAsync(address, typeof(Object));
+            
+            if (locations.Count == 0) return null;
+
+            var asset = await Addressables.LoadAssetAsync<Object>(address);
+            _isLoading = false;
+            ChangeLoadingState(LoadingStates.InterpolatedLoadProgressComplete);
+
+            return asset;
+        }
+
+        public static async UniTask<Object> LoadAssetReferenceAsync(AssetReference assetReference, LoadType loadType = LoadType.Hidden)
+        {
+            if(IsLoading){
+                Debug.LogWarning("Manager is currently loading something");
+                return null;
             }
+            StartupLoading(assetReference.AssetGUID, loadType);
+
+            IAssetsReferenceLoader<Object> loader = new AssetsReferenceLoader<Object>();
+            await loader.PreloadAssetAsync(assetReference as AssetReferenceT<Object>);
+
+            if (loader.TryGetAsset(assetReference as AssetReferenceT<Object>, out Object result))
+            {
+                ChangeLoadingState(LoadingStates.InterpolatedLoadProgressComplete);
+                _isLoading = false;
+                return result;
+            }
+            else
+            {
+                _isLoading = false;
+                Debug.LogWarning("No asset loaded");
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Unloads an asset identified by its address.
+        /// </summary>
+        /// <param name="address">The address of the asset to unload.</param>
+        public static void UnloadAsset(string address)
+        {
+            Addressables.Release(address);
+        }
+
+        /// <summary>
+        /// Unloads a given asset.
+        /// </summary>
+        /// <typeparam name="T">Type of the asset.</typeparam>
+        /// <param name="asset">The asset to unload.</param>
+        public static void UnloadAsset(Object asset)
+        {
+            Addressables.Release(asset);
+        }
+
+        /// <summary>
+        /// Unloads an instantiated game object.
+        /// </summary>
+        /// <param name="instance">The game object instance to unload.</param>
+        public static void UnloadInstance(GameObject instance)
+        {
+            Addressables.ReleaseInstance(instance);
         }
 
         /// <summary>
@@ -139,10 +114,14 @@ namespace Conkist.GDK
         /// </summary>
         /// <param name="address">The address to download content from.</param>
         /// <param name="loadType">The type of load.</param>
-        public async UniTask DownloadContentAsync(string address, LoadType loadType = LoadType.FullScreen)
+        public static async UniTask DownloadContentAsync(string address, LoadType loadType = LoadType.FullScreen)
         {
-            IsDownloading = true;
-            await LoadingEventTask(address, LoadStatus.LoadStarted, loadType);
+            if(IsLoading){
+                Debug.LogWarning("Manager is currently loading something");
+                return;
+            }
+            StartupLoading(address, loadType);
+
             long size = await Addressables.GetDownloadSizeAsync(address);
 
             if (size > 0)
@@ -160,8 +139,8 @@ namespace Conkist.GDK
                     await download;
                 }
 
-                await LoadingEventTask(address, LoadStatus.InterpolatedLoadProgressComplete, loadType);
-                IsDownloading = false;
+                ChangeLoadingState(LoadingStates.LoadProgressComplete);
+                _isLoading = false;
                 await UniTask.Delay(300, DelayType.Realtime);
                 Addressables.Release(address);
             }
@@ -171,10 +150,14 @@ namespace Conkist.GDK
         /// Asynchronously downloads content from multiple asset labels, showing progress and triggering load events.
         /// </summary>
         /// <param name="assetLabels">Asset labels representing the content to download.</param>
-        public async UniTask DownloadContentAsync(params AssetLabelReference[] assetLabels)
+        public static async UniTask DownloadContentAsync(LoadType loadType = LoadType.FullScreen, params AssetLabelReference[] assetLabels)
         {
-            IsDownloading = true;
-            await LoadingEventTask(assetLabels.ToString(), LoadStatus.LoadStarted, LoadType.FullScreen);
+            if(IsLoading){
+                Debug.LogWarning("Manager is currently loading something");
+                return;
+            }
+            StartupLoading(assetLabels.ToString(), loadType);
+
             var downloadPack = new AssetLabelsDownloadPack(assetLabels);
 
             downloadPack.TrackProgress(Progress.Create<AssetsDownloadStatus>(DownloadProgress));
@@ -185,149 +168,99 @@ namespace Conkist.GDK
                 result = await downloadPack.StartDownloadAsync();
             }
 
-            await LoadingEventTask(assetLabels.ToString(), LoadStatus.InterpolatedLoadProgressComplete, LoadType.FullScreen);
-            IsDownloading = false;
+            ChangeLoadingState(LoadingStates.LoadProgressComplete);
+            _isLoading = false;
             await UniTask.Delay(300, DelayType.Realtime);
             downloadPack.Dispose();
         }
 
         /// <summary>
-        /// Asynchronously loads an asset from the given address and triggers load events.
-        /// </summary>
-        /// <typeparam name="T">Type of the asset to load.</typeparam>
-        /// <param name="address">The address to load the asset from.</param>
-        /// <param name="loadType">The type of load.</param>
-        /// <returns>The loaded asset.</returns>
-        public async UniTask<T> LoadAssetAsync<T>(string address, LoadType loadType = LoadType.Hidden) where T : Object
-        {
-            IsLoading = true;
-            await LoadingEventTask(address, LoadStatus.LoadStarted, loadType);
-            var locations = await Addressables.LoadResourceLocationsAsync(address, typeof(T));
-            if (locations.Count == 0) return null;
-
-            var asset = await Addressables.LoadAssetAsync<T>(address);
-            IsLoading = false;
-            await LoadingEventTask(address, LoadStatus.InterpolatedLoadProgressComplete, loadType);
-            return asset;
-        }
-
-        /// <summary>
-        /// Asynchronously loads an asset using an asset reference and triggers load events.
-        /// </summary>
-        /// <typeparam name="T">Type of the asset to load.</typeparam>
-        /// <param name="assetReference">The asset reference.</param>
-        /// <param name="loadType">The type of load.</param>
-        /// <returns>The loaded asset.</returns>
-        public async UniTask<T> LoadAssetAsync<T>(AssetReferenceT<T> assetReference, LoadType loadType = LoadType.Hidden) where T : Object
-        {
-            IsLoading = true;
-            await LoadingEventTask(assetReference.AssetGUID, LoadStatus.LoadStarted, loadType);
-            IAssetsReferenceLoader<T> loader = new AssetsReferenceLoader<T>();
-            await loader.PreloadAssetAsync(assetReference);
-
-            if (loader.TryGetAsset(assetReference, out T result))
-            {
-                await LoadingEventTask(assetReference.AssetGUID, LoadStatus.InterpolatedLoadProgressComplete, loadType);
-                IsLoading = false;
-                return result;
-            }
-            else
-            {
-                IsLoading = false;
-                Debug.LogWarning("No asset loaded");
-            }
-            return null;
-        }
-
-        /// <summary>
         /// Preloads an asset asynchronously.
         /// </summary>
-        /// <typeparam name="T">Type of the asset.</typeparam>
         /// <param name="assetReference">The asset reference.</param>
         /// <returns>A UniTask representing the async operation.</returns>
-        public UniTask GetAssetPreloader<T>(AssetReferenceT<T> assetReference) where T : Object
+        public UniTask GetAssetPreloader(AssetReferenceT<Object> assetReference)
         {
-            IsLoading = true;
-            var loader = new AssetsReferenceLoader<T>().PreloadAssetAsync(assetReference);
-            IsLoading = false;
+            _isLoading = true;
+            var loader = new AssetsReferenceLoader<Object>().PreloadAssetAsync(assetReference);
+            _isLoading = false;
             return loader;
         }
 
-        /// <summary>
-        /// Unloads an asset identified by its address.
-        /// </summary>
-        /// <param name="address">The address of the asset to unload.</param>
-        public void UnloadAsset(string address)
+        internal static void DownloadProgress(AssetsDownloadStatus status)
         {
-            Addressables.Release(address);
+            LoadingEvents.DownloadStatusUpdateEvent.Trigger(status);
+            LoadProgress(status.PercentProgress);
         }
 
-        /// <summary>
-        /// Unloads a given asset.
-        /// </summary>
-        /// <typeparam name="T">Type of the asset.</typeparam>
-        /// <param name="asset">The asset to unload.</param>
-        public void UnloadAsset<T>(T asset)
+        internal static void LoadProgress(float progress)
         {
-            Addressables.Release(asset);
+            Instance._loadingProgress = progress;
+            LoadingEvents.LoadProgressUpdateEvent.Trigger(progress);
         }
 
-        /// <summary>
-        /// Unloads an instantiated game object.
-        /// </summary>
-        /// <param name="instance">The game object instance to unload.</param>
-        public void UnloadInstance(GameObject instance)
+        internal static void ChangeLoadType(LoadType loadType)
         {
-            Addressables.ReleaseInstance(instance);
-        }
-
-        /// <summary>
-        /// Clears the cache for a given address.
-        /// </summary>
-        /// <param name="address">The address to clear the cache for.</param>
-        public void ClearCache(string address)
-        {
-            Addressables.ClearDependencyCacheAsync(address);
+            if(Instance._loadType == loadType) return;
+            
+            Instance._loadType = loadType;
+            LoadingEvents.LoadTypeChangeEvent.Trigger(loadType);
         }
 
         /// <summary>
         /// Fires a loading event and returns a task based on the load type.
         /// </summary>
         /// <param name="address">The address related to the event.</param>
-        /// <param name="status">The load status.</param>
+        /// <param name="states">The load status.</param>
         /// <param name="type">The type of load.</param>
         /// <returns>A UniTask representing the event task.</returns>
-        private UniTask LoadingEventTask(string address, LoadStatus status, LoadType type)
+        internal static void ChangeLoadingState(LoadingStates states)
         {
-            LoadStatus = status;
-            LoadType = type;
-            LoadingEvent.Trigger(address, status, type);
-            switch (type)
+            Instance._loadingStates = states;
+            Debug.Log("[LoadingEvent] ChangeState " + states);
+            LoadingEvents.LoadingStateChangeEvent.Trigger(_loadAddress, states);
+        }
+
+        internal static void StartupLoading(string address, LoadType loadType, bool ignoreEventsOnHidden = true)
+        {
+            _isLoading = true;
+            _loadAddress = address;
+            _ignoreEventsOnHidden = ignoreEventsOnHidden;
+
+            ChangeLoadType(loadType);
+            ChangeLoadingState(LoadingStates.LoadStarted);
+            EventManager.TriggerEvent(new LoadingEvents.LoadingStartEvent(address, loadType));
+        }
+
+#region EXTENSIONS
+        /// <summary>
+        /// Clears the cache for a given address.
+        /// </summary>
+        /// <param name="address">The address to clear the cache for.</param>
+        public static void ClearCache(string address)
+        {
+            Addressables.ClearDependencyCacheAsync(address);
+        }
+
+        /// <summary>
+        /// Asynchronously checks if a given address is in the cache.
+        /// </summary>
+        /// <param name="address">The address to check.</param>
+        /// <returns>True if in cache, otherwise false.</returns>
+        public static async UniTask<bool> InCacheAsync(string address)
+        {
+            try
             {
-                case LoadType.Quick:
-                    {
-                        if(quickLoadListener != null)
-                        return quickLoadListener.GetLoadingTask(address, status);
-                    }
-                    break;
-                case LoadType.FullScreen:
-                    {
-                        if(downloadListener != null)
-                        return downloadListener.GetLoadingTask(address, status);
-                    }
-                    break;
+                var getSizeAsyncOp = Addressables.GetDownloadSizeAsync(address).Task.AsUniTask();
+                long result = await getSizeAsyncOp;
+                return result > 0;
             }
-            return UniTask.Yield().ToUniTask();
+            catch (InvalidKeyException)
+            {
+                Debug.LogWarning("The address:" + address + " is not listed in the addressable groups. Try to make a new build if does.");
+                return false;
+            }
         }
-
-        private void LoadProgress(float progress)
-        {
-            downloadListener.LoadProgress(progress);
-        }
-
-        private void DownloadProgress(AssetsDownloadStatus status)
-        {
-            downloadListener.DownloadProgress(status);
-        }
+#endregion
     }
 }
